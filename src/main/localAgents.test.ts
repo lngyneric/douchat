@@ -22,12 +22,12 @@ describe('local agent discovery', () => {
       desktopApp: async () => undefined,
       version: async (path) => path.endsWith('/codex') ? 'codex-cli 1.2.3' : undefined
     })
-    expect(agents).toHaveLength(11)
+    expect(agents).toHaveLength(13)
     expect(agents.find((agent) => agent.id === 'codex')).toMatchObject({ installed: true, discovered: true, status: 'ready', chatSupported: true, path: '/local/bin/codex', version: 'codex-cli 1.2.3' })
     expect(agents.find((agent) => agent.id === 'grok')).toMatchObject({ installed: true, chatSupported: true, path: '/local/bin/grok' })
     expect(agents.find((agent) => agent.id === 'openclaw')).toMatchObject({ installed: true, chatSupported: true })
     expect(agents.find((agent) => agent.id === 'claude')?.installed).toBe(false)
-    expect(agents.at(-1)?.id).toBe('fastclaw')
+    expect(agents.at(-1)?.id).toBe('agenttars')
   })
   it('reports a desktop app separately instead of pretending it is a compatible CLI', async () => {
     const agents = await detectLocalAgents({
@@ -57,7 +57,7 @@ describe('local agent discovery', () => {
       status: 'ready', custom: true
     })
     await removeCustomLocalAgent(custom!.id)
-    await expect(detectLocalAgents({ executable: async () => undefined, desktopApp: async () => undefined })).resolves.toHaveLength(11)
+    await expect(detectLocalAgents({ executable: async () => undefined, desktopApp: async () => undefined })).resolves.toHaveLength(13)
   })
   it('validates only the requested CLI instead of probing the whole catalog', async () => {
     vi.mocked(resolveExecutable).mockResolvedValue('/local/bin/codex')
@@ -71,7 +71,7 @@ describe('local agent discovery', () => {
     const agent = await validateLocalAgent('codex')
     expect(agent).toMatchObject({ id: 'codex', name: 'Work Codex', path: '/tools/codex', custom: undefined, args: ['--profile', 'work'], avatar: 'data:image/png;base64,YQ==' })
     const all = await detectLocalAgents({ executable: async () => undefined, desktopApp: async () => undefined })
-    expect(all).toHaveLength(11)
+    expect(all).toHaveLength(13)
     await expect(removeCustomLocalAgent('codex')).rejects.toThrow('Invalid custom')
   })
   it('edits a custom command in place and preserves simultaneous registry writes', async () => {
