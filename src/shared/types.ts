@@ -91,7 +91,7 @@ export interface RemoteDirectoryListing {
   directories: string[]
 }
 
-export const REMOTE_AGENT_ADAPTERS = ['codex', 'claude', 'gemini', 'grok', 'cursor', 'opencode', 'kimi', 'openclaw', 'fastclaw', 'hermes', 'omp', 'custom'] as const
+export const REMOTE_AGENT_ADAPTERS = ['codex', 'claude', 'gemini', 'grok', 'cursor', 'opencode', 'kimi', 'openclaw', 'fastclaw', 'hermes', 'omp', 'codebuddy', 'agenttars', 'custom'] as const
 export type RemoteAgentAdapter = typeof REMOTE_AGENT_ADAPTERS[number]
 
 /** Structured launch settings. There is intentionally no free-form shell

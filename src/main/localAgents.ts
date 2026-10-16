@@ -296,7 +296,9 @@ export const localAgentCatalog = [
   ['cursor', 'Cursor', 'cursor-agent', ['Cursor.app']],
   ['kimi', 'Kimi', 'kimi', ['Kimi.app']],
   ['omp', 'OMP', 'omp', []],
-  ['fastclaw', 'FastClaw', 'fastclaw', []]
+  ['fastclaw', 'FastClaw', 'fastclaw', []],
+  ['codebuddy', 'CodeBuddy', 'codebuddy', []],
+  ['agenttars', 'Agent TARS', 'agent-tars', []]
 ] as const
 
 export async function findDesktopApp(names: readonly string[], roots = [

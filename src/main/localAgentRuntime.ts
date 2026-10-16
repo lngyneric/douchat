@@ -70,6 +70,8 @@ export function localAgentArgs(id: string, prompt: string, output: string, appOw
     case 'fastclaw': return ['chat', ...(session ? ['--resume', session] : []), '--query', prompt]
     case 'hermes': return ['--oneshot', prompt]
     case 'omp': return ['--print', '--mode', 'text', '--no-session', '--no-tools', prompt]
+    case 'codebuddy': return ['-p', '--output-format', 'text', '--', prompt]
+    case 'agenttars': return ['--headless', '--quiet', '--format', 'text', '--input', prompt]
     default: throw new Error('This local agent has no chat adapter yet')
   }
 }
@@ -98,7 +100,7 @@ export function localAgentText(id: string, stdout: string): string {
       return []
     }).filter(Boolean).join('\n\n').trim()
   }
-  if (['fastclaw', 'hermes', 'omp'].includes(id)) return stdout.trim()
+  if (['fastclaw', 'hermes', 'omp', 'codebuddy', 'agenttars'].includes(id)) return stdout.trim()
   if (id === 'opencode') {
     const events = stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
     const error = events.find((event) => event.type === 'error')

@@ -249,8 +249,8 @@ Open **Settings → Local agents**, or choose **Manage local agents** in Contact
 refresh the catalog. Detection uses the login-shell `PATH`, including tools
 installed through nvm, pnpm or `~/.local/bin`.
 
-Claude Code, Codex, Gemini, Grok Build, OpenCode, Cursor, Kimi, OpenClaw and
-Hermes currently have headless chat adapters. Install and sign in to a CLI in the terminal before creating a contact.
+Claude Code, Codex, Gemini, Grok Build, OpenCode, Cursor, Kimi, OpenClaw,
+Hermes, CodeBuddy and Agent TARS currently have headless chat adapters. Install and sign in to a CLI in the terminal before creating a contact.
 Several contacts may use the same CLI while retaining separate topic histories.
 Detection confirms that an executable exists; it cannot guarantee login state or
 compatibility with every CLI version.

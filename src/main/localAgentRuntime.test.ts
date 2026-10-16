@@ -45,7 +45,7 @@ describe('local agent output', () => {
     expect(localAgentText('cursor', '{"result":"Hello"}')).toBe('Hello')
     expect(localAgentText('opencode', '{"type":"step_start"}\n{"type":"text","part":{"text":"Hello"}}\n')).toBe('Hello')
     expect(localAgentText('openclaw', '{"ok":true,"status":"ok","final":"Hello"}')).toBe('Hello')
-    for (const id of ['fastclaw', 'hermes', 'omp']) expect(localAgentText(id, 'Hello\n')).toBe('Hello')
+    for (const id of ['fastclaw', 'hermes', 'omp', 'codebuddy', 'agenttars']) expect(localAgentText(id, 'Hello\n')).toBe('Hello')
   })
   it('reports authentication or agent failures instead of treating errors as replies', () => {
     expect(() => localAgentText('claude', '{"is_error":true,"result":"Log in first"}')).toThrow('Log in first')
@@ -108,7 +108,7 @@ describe('local agent output', () => {
   })
   it('passes prompts as data and does not bypass CLI permissions', () => {
     const prompt = '$(touch /tmp/should-not-exist); --force'
-    for (const id of ['claude', 'gemini', 'grok', 'cursor', 'opencode', 'kimi', 'fastclaw', 'hermes', 'omp']) {
+    for (const id of ['claude', 'gemini', 'grok', 'cursor', 'opencode', 'kimi', 'fastclaw', 'hermes', 'omp', 'codebuddy', 'agenttars']) {
       const args = localAgentArgs(id, prompt, '/tmp/output')
       expect(args).toContain(prompt)
       expect(args.join(' ')).not.toContain('--dangerously')
@@ -116,6 +116,8 @@ describe('local agent output', () => {
     expect(localAgentArgs('codex', prompt, '/tmp/output')).toContain('workspace-write')
     expect(localAgentArgs('openclaw', prompt, '/tmp/output')).toEqual(expect.arrayContaining(['agent', 'exec', '--message-file', '-', '--json']))
     expect(localAgentArgs('omp', prompt, '/tmp/output')).toContain('--no-tools')
+    expect(localAgentArgs('codebuddy', prompt, '/tmp/output')).toEqual(['-p', '--output-format', 'text', '--', prompt])
+    expect(localAgentArgs('agenttars', prompt, '/tmp/output')).toEqual(['--headless', '--quiet', '--format', 'text', '--input', prompt])
   })
 })
 

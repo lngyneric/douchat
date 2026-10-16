@@ -1,6 +1,6 @@
 export interface LocalModel { id: string; name: string }
 export interface LocalModelList { models: LocalModel[]; source: 'agent' | 'manual'; configurable: boolean }
-export const configurableLocalAgents = ['codex', 'claude', 'opencode', 'cursor', 'grok', 'gemini', 'kimi', 'hermes', 'omp', 'openclaw']
+export const configurableLocalAgents = ['codex', 'claude', 'opencode', 'cursor', 'grok', 'gemini', 'kimi', 'hermes', 'omp', 'openclaw', 'codebuddy']
 export function localModelId(value?: string): string | undefined {
   if (!value || value === 'default') return undefined
   const model = value.trim()

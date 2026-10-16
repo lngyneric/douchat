@@ -10,11 +10,11 @@ import { NativeDialog } from './NativeDialog'
 
 const ADAPTER_LABELS: Record<RemoteAgentAdapter, string> = {
   codex: 'Codex', claude: 'Claude Code', gemini: 'Gemini', grok: 'Grok Build', cursor: 'Cursor', opencode: 'OpenCode',
-  kimi: 'Kimi', openclaw: 'OpenClaw', fastclaw: 'FastClaw', hermes: 'Hermes', omp: 'OMP', custom: 'Custom CLI'
+  kimi: 'Kimi', openclaw: 'OpenClaw', fastclaw: 'FastClaw', hermes: 'Hermes', omp: 'OMP', codebuddy: 'CodeBuddy', agenttars: 'Agent TARS', custom: 'Custom CLI'
 }
 const DEFAULT_COMMANDS: Record<RemoteAgentAdapter, string> = {
   codex: 'codex', claude: 'claude', gemini: 'gemini', grok: 'grok', cursor: 'cursor-agent', opencode: 'opencode',
-  kimi: 'kimi', openclaw: 'openclaw', fastclaw: 'fastclaw', hermes: 'hermes', omp: 'omp', custom: ''
+  kimi: 'kimi', openclaw: 'openclaw', fastclaw: 'fastclaw', hermes: 'hermes', omp: 'omp', codebuddy: 'codebuddy', agenttars: 'agent-tars', custom: ''
 }
 
 export function LocalAgentEditor({ agent, onSaved, onClose }: {
