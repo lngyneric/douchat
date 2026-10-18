@@ -28,6 +28,7 @@ import { summarizeRuntimeError, type RuntimeErrorSummary } from '../../../shared
 import { insertMention, mentionQuery, updateSelectedMentions, type MentionQuery } from '../../../shared/bot/mentions'
 import { socialFollowUpTarget } from '../../../shared/socialFollowUp'
 import { remoteHost } from './RemoteMark'
+import { OverlayScrollbar } from './OverlayScrollbar'
 import { AgentAvatar, EmptyAvatar, UserAvatar, agentDisplayName, conversationDisplayName, dayLabel, formatTime, isDifferentDay } from './common'
 import {
   speechRecognitionConstructor,
@@ -1733,6 +1734,7 @@ export function ChatPane({
           )}
         </div>
       </div>
+      <OverlayScrollbar target={scrollRef} />
 
       {messageMenu && <div ref={menuRef} className="context-menu" role="menu" aria-label={t('Message actions')} style={{ left: messageMenu.x, top: messageMenu.y }} onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

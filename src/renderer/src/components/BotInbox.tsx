@@ -24,6 +24,7 @@ import type { ReactElement } from 'react'
 import type { AppSnapshot, ChatMessage, Conversation } from '../../../shared/types'
 import { latestAssistantPreview } from '../../../shared/bot/preview'
 import { compareConversationActivity, compareConversationOrganization } from '../../../shared/bot/order'
+import { OverlayScrollbar } from './OverlayScrollbar'
 import { UserAvatar, ConversationAvatar, SidebarResizer, conversationDisplayName, formatTime, relativeTime } from './common'
 
 interface ContextMenuState {
@@ -77,6 +78,7 @@ export function BotInbox({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [now, setNow] = useState(Date.now)
   const contextRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLElement>(null)
   const createRef = useRef<HTMLDivElement>(null)
   const filterRef = useRef<HTMLDivElement>(null)
   const filterButtonRef = useRef<HTMLButtonElement>(null)
@@ -327,7 +329,7 @@ export function BotInbox({
       </div>
 
 
-      <nav className="conversation-list" aria-label={t('Chats')}>
+      <nav className="conversation-list" ref={listRef} aria-label={t('Chats')}>
         {pinned.map(row)}
         {rest.map(row)}
         {!filtered.length && (
@@ -336,6 +338,7 @@ export function BotInbox({
           </p>
         )}
       </nav>
+      <OverlayScrollbar target={listRef} />
 
 
       {contextMenu && menuTarget && (
