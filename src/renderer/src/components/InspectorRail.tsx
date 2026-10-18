@@ -3,13 +3,15 @@ import { GroupInviteDialog } from './GroupInviteDialog'
 import { ContactKindBadge } from './ContactKindBadge'
 import { remoteHost } from './RemoteMark'
 import { ConversationWorkspaceSetting } from './ConversationWorkspaceSetting'
+import { SupportShareDialog } from './SupportShareDialog'
 import type { SocialPerson } from '../../../shared/social'
 import type { ProfileAnchor } from './MemberProfilePopover'
 import { t } from '../preferences'
 import { CalendarClock, ChevronDown, ChevronUp, ChevronRight, Minus, Pause, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react'
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { AgentConfig, AppSnapshot, ChatMessage, Conversation, Routine, RoutineSchedule, TaskRun } from '../../../shared/types'
+import { OverlayScrollbar } from './OverlayScrollbar'
 import { AgentAvatar, UserAvatar, agentDisplayName, agentDisplayRole } from './common'
 
 const INITIAL_MEMBER_COUNT = 14
@@ -47,13 +49,14 @@ export function InspectorRail({
   onRunRoutineNow?: (routineId: string) => Promise<void>
 }): ReactElement {
   const [memberQuery, setMemberQuery] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [visibleMemberCount, setVisibleMemberCount] = useState(INITIAL_MEMBER_COUNT)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const canLeave = conversation?.type === 'group' && Boolean(conversation.remoteRoomId)
     && Boolean(conversation.socialRoom?.members[0]?.id) && Boolean(conversation.ownerId)
     && conversation.socialRoom!.members[0].id !== conversation.ownerId
   useEffect(() => { setConfirmLeave(false) }, [conversation?.id])
-  const [recordsDialog, setRecordsDialog] = useState<'history' | 'routines' | 'invite' | null>(null)
+  const [recordsDialog, setRecordsDialog] = useState<'history' | 'routines' | 'invite' | 'support' | null>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
@@ -128,7 +131,7 @@ export function InspectorRail({
   const visiblePeople = people.filter((person) => visibleKeys.has(`person:${person.id}`))
   return <>
     <aside className="inspector-rail" aria-label={t('Chat details')}>
-      <div className="inspector-scroll">
+      <div className="inspector-scroll" ref={scrollRef}>
         {conversation && (
           <section className="member-section">
             {conversation.type === 'group' && <label className="group-member-search"><Search size={16} /><input aria-label={t('Search group members')} placeholder={t('Search group members')} value={memberQuery} onChange={(event) => setMemberQuery(event.target.value)} />{memberQuery && <button type="button" aria-label={t('Clear search')} onClick={() => setMemberQuery('')}><X size={14} /></button>}</label>}
@@ -190,6 +193,7 @@ export function InspectorRail({
               </section>
               <ConversationWorkspaceSetting conversation={conversation} agents={snapshot.agents} />
               <button className="detail-search-button" onClick={() => setRecordsDialog('invite')}>{t('Invite to group')} <ChevronRight size={16} /></button>
+              {!conversation.remoteRoomId && <button className="detail-search-button" onClick={() => setRecordsDialog('support')}>{t('Share with support')} <ChevronRight size={16} /></button>}
               <div className="detail-toggles">
                 <label>{t('Save to contacts')}<button type="button" className="detail-switch" role="switch" aria-label={t('Save to contacts')} aria-checked={!!conversation.savedToContacts} disabled={busy} onClick={() => void update(() => window.douchat.updateConversation(conversation.id, { savedToContacts: !conversation.savedToContacts }))} /></label>
                 <label>{t('Mute notifications')}<button type="button" className="detail-switch" role="switch" aria-label={t('Mute notifications')} aria-checked={!!conversation.muted} disabled={busy} onClick={() => void update(() => window.douchat.updateConversation(conversation.id, { muted: !conversation.muted }))} /></label>
@@ -200,6 +204,7 @@ export function InspectorRail({
               <ConversationWorkspaceSetting conversation={conversation} agents={snapshot.agents} />
               <button className="detail-search-button" onClick={() => { setError(''); setQuery(''); setRecordsDialog('history') }}>{t('Search chat history')} <ChevronRight size={16} /></button>
               <button className="detail-search-button" onClick={() => { setError(''); setRecordsDialog('routines') }}>{t('View scheduled tasks')} <ChevronRight size={16} /></button>
+              {!conversation.remoteRoomId && !conversation.person && <button className="detail-search-button" onClick={() => setRecordsDialog('support')}>{t('Share with support')} <ChevronRight size={16} /></button>}
               <div className="detail-toggles">
                 <label>{t('Mute notifications')}<button type="button" className="detail-switch" role="switch" aria-label={t('Mute notifications')} aria-checked={!!conversation.muted} disabled={busy} onClick={() => void update(() => window.douchat.updateConversation(conversation.id, { muted: !conversation.muted }))} /></label>
                 <label>{t('Pin to top')}<button type="button" className="detail-switch" role="switch" aria-label={t('Pin to top')} aria-checked={!!conversation.pinned} disabled={busy} onClick={() => void update(() => window.douchat.setConversationPinned(conversation.id, !conversation.pinned))} /></label>
@@ -228,8 +233,10 @@ export function InspectorRail({
         )}
 
       </div>
+      <OverlayScrollbar target={scrollRef} />
     </aside>
     {conversation && recordsDialog === 'invite' && createPortal(<GroupInviteDialog key={conversation.id} conversation={conversation} agents={snapshot.agents} userName={snapshot.userName} userAvatar={snapshot.userAvatar} onClose={() => setRecordsDialog(null)} />, document.body)}
+    {conversation && recordsDialog === 'support' && createPortal(<SupportShareDialog key={conversation.id} conversation={conversation} onClose={() => setRecordsDialog(null)} />, document.body)}
     {conversation && recordsDialog === 'history' && createPortal(<ChatHistoryDialog
       conversation={conversation}
       messages={results}

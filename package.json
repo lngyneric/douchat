@@ -19,7 +19,10 @@
   "scripts": {
     "prepare:dev-host": "node scripts/prepare-electron-dev-host.mjs",
     "dev": "npm run prepare:dev-host && electron-vite dev --watch",
+    "dev:web": "vite --config vite.web.config.ts",
     "build": "electron-vite build",
+    "build:web": "vite build --config vite.web.config.ts",
+    "publish:web": "node scripts/publish-web.mjs",
     "package": "npm run build && electron-builder --dir --publish never",
     "package:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip --x64 --arm64 --publish never -c.mac.identity=null -c.mac.hardenedRuntime=false -c.mac.notarize=false",
     "package:win": "npm run build && electron-builder --win nsis --x64 --publish never",

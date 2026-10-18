@@ -324,7 +324,8 @@ describe('DouchatStore', () => {
       provider: 'gateway',
       model: 'default'
     })
-    expect(first.agent?.id).toMatch(/^system-admin-[0-9a-f-]{36}$/i)
+    // Derived from the account, so every signed-in device makes the same contact.
+    expect(first.agent?.id).toMatch(/^system-admin-[0-9a-f]{32}$/)
     expect(first.conversation).toMatchObject({ type: 'direct', agentIds: [first.agent?.id] })
     expect(store.systemAdminAgentId).toBe(first.agent?.id)
     expect(store.defaultConversationId).toBe(first.conversation?.id)
@@ -699,7 +700,8 @@ describe('DouchatStore', () => {
     const recovered = recoveredStore.ensureDefaultCloudContact('user-1', binding)
     expect(recovered.created).toBe(true)
     expect(recovered.agent).toMatchObject({ name: 'Dr. Dou', systemRole: 'admin' })
-    expect(recovered.agent?.id).not.toBe(originalId)
+    // The account-derived id is reused; the earlier chat and contact are gone.
+    expect(recovered.agent?.id).toBe(originalId)
     expect(recoveredStore.systemAdminAgentId).toBe(recovered.agent?.id)
     expect(recoveredStore.defaultConversationId).toBe(recovered.conversation?.id)
   })

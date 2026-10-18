@@ -22,9 +22,12 @@ import { configureNativeDialogWindows, resizeNativeDialog } from './nativeDialog
 import { mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { DiagnosticLog } from './diagnostics'
-import { release as osRelease } from 'node:os'
+import { hostname, release as osRelease } from 'node:os'
 import { notifyWindows } from './windowNotifications'
 import { SocialClient } from './social'
+import { CloudSyncClient } from './cloudSync'
+import { captureIpcHandlers, REMOTE_SENDER, runDesktopRpc } from './desktopRpc'
+import { SUPPORT_SHARE_HOURS } from '../shared/cloudSync'
 import type { SocialAction } from '../shared/social'
 import 'dotenv/config'
 import { randomUUID } from 'node:crypto'
@@ -191,6 +194,8 @@ app.on('browser-window-created', (_event, window) => {
   })
 })
 app.on('child-process-gone', (_event, details) => diagnostics.write('child-process.gone', JSON.stringify(details)))
+// Every handler registered from here on can also serve the web app (desktopRpc.ts).
+captureIpcHandlers()
 ipcMain.handle('douchat:resize-dialog', (event, name: unknown, width: unknown, height: unknown) => {
   if (typeof name !== 'string' || typeof width !== 'number' || typeof height !== 'number') return false
   return resizeNativeDialog(event.sender, name, height, width)
@@ -336,6 +341,9 @@ function broadcast(snapshot: AppSnapshot): void {
     localWorkBlocker = undefined
   }
   notifyWindows(BrowserWindow.getAllWindows(), 'douchat:snapshot', snapshot)
+  // The web app shows the same "replying…" state as these windows.
+  cloudSync?.publishActivity(snapshot.activity)
+  cloudSync?.publishRoomReads(store.roomReadMarks())
 }
 
 // A full snapshot is built synchronously on this thread, which also forwards
@@ -355,6 +363,7 @@ function scheduleBroadcast(): void {
 }
 
 let social: SocialClient | undefined
+let cloudSync: CloudSyncClient | undefined
 let daemon: DaemonClient | undefined
 let socialAccountId = ''
 
@@ -381,8 +390,8 @@ function broadcastAuth(state: DesktopAuthState): void {
   }
   if (nextSocialAccount !== socialAccountId) {
     socialAccountId = nextSocialAccount
-    if (nextSocialAccount) { social?.start(); daemon?.start() }
-    else { social?.stop(); daemon?.stop() }
+    if (nextSocialAccount) { social?.start(); daemon?.start(); cloudSync?.start() }
+    else { social?.stop(); daemon?.stop(); cloudSync?.stop() }
   }
   let welcomeConversationId: string | undefined
   let builtInRefresh: Promise<string | undefined> = Promise.resolve(undefined)
@@ -572,6 +581,8 @@ function validateRoutineInput(input: CreateRoutineInput): void {
 }
 
 function isDouchatRenderer(contents: Electron.WebContents | null): boolean {
+  // The web app's calls run through the same handlers as this app's windows.
+  if (contents === REMOTE_SENDER) return true
   return Boolean(contents && BrowserWindow.getAllWindows().some((window) => window.webContents === contents))
 }
 
@@ -707,6 +718,25 @@ app.whenReady().then(async () => {
   }, new DeviceIdentity(join(app.getPath('userData'), 'device.json'), safeStorage))
 
   social = new SocialClient(webAppUrl, auth, store, runtime, scheduleBroadcast)
+  // Every account record lives in the cloud; this computer keeps a synced copy.
+  cloudSync = new CloudSyncClient(webAppUrl, {
+    identity: () => {
+      const state = auth!.getState()
+      const token = auth!.getAccessToken()
+      return state.status === 'signed-in' && token ? { id: state.user.id, token } : undefined
+    },
+    invalidateSession: () => auth!.invalidateSession()
+  }, store.cloudSync, scheduleBroadcast, fetch, async (request) => {
+    // A message typed in the web app runs exactly as if it were typed here.
+    await runtime.sendMessage(request.conversationId, request.text, undefined, undefined, undefined, request.id)
+    scheduleBroadcast()
+  }, async (call) => {
+    const result = await runDesktopRpc(call)
+    scheduleBroadcast()
+    return result
+  }, hostname())
+  cloudSync.onRoomRead = (mark) => store.applyRoomRead(mark)
+  if (socialAccountId) cloudSync.start()
   runtime.setHumanSender((id, text, images, files, mentions) => social!.sendMessage(id, text, images, files, mentions))
   // douchat-host connections: enrollment and status here; agents on them run from this
   // computer like SSH agents, with the relay carrying their scripts (remote/daemonRelay.ts).
@@ -1468,6 +1498,27 @@ app.whenReady().then(async () => {
     runtime.resetConversation(conversationId, topicId)
     return push()
   })
+  // Support reads a conversation only after the user shares it here; see docs/cloud-sync.md.
+  const shareableConversation = (conversationId: string) => {
+    const conversation = store.accountConversations.find(item => item.id === conversationId)
+    if (!conversation || conversation.remoteRoomId || conversation.person) throw new Error('Chat not found')
+    if (!cloudSync) throw new Error('Sign in to Douchat first.')
+    return cloudSync
+  }
+  ipcMain.handle('douchat:support-shares', (event, conversationId: string) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    return shareableConversation(conversationId).supportShares(conversationId)
+  })
+  ipcMain.handle('douchat:create-support-share', (event, conversationId: string, hours: number, note: string) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    if (!SUPPORT_SHARE_HOURS.includes(hours as typeof SUPPORT_SHARE_HOURS[number])) throw new Error('Invalid duration')
+    return shareableConversation(conversationId).createSupportShare(conversationId, hours, typeof note === 'string' ? note.slice(0, 500) : '')
+  })
+  ipcMain.handle('douchat:revoke-support-share', async (event, shareId: string) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    if (!cloudSync || typeof shareId !== 'string') throw new Error('Sign in to Douchat first.')
+    await cloudSync.revokeSupportShare(shareId)
+  })
   ipcMain.handle('douchat:reset-conversation-context', async (_event, conversationId: string) => {
     const conversation = store.accountConversations.find(item => item.id === conversationId)
     if (!conversation) throw new Error('Chat not found')
@@ -1565,6 +1616,7 @@ app.on('before-quit', () => {
   updater?.stopAutomaticChecks()
   cancelLocalModelQueries()
   social?.stop()
+  cloudSync?.stop()
   imChannels?.stop()
   if (localWorkBlocker !== undefined) { powerSaveBlocker.stop(localWorkBlocker); localWorkBlocker = undefined }
   for (const agent of store?.agents ?? []) runtime?.disposeAgent(agent.id)
