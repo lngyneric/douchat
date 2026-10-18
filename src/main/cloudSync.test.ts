@@ -224,4 +224,26 @@ describe('cloud sync between devices', () => {
     await a.sync()
     expect(a.store.contextMessages(chat.id, chat.activeTopicId).map((message) => message.text)).toContain('after the reset')
   })
+
+  it('keeps messages moved out of a chat that is removed in the same pull', async () => {
+    const server = cloud()
+    const a = device(server)
+    const b = device(server)
+    const keep = a.store.accountConversations[0]
+    const other = a.store.createAgent({ name: 'Extra', role: '', instructions: '', color: '', provider: 'gateway', model: 'default' })
+    const dropped = `direct-${other.id}`
+    const line = a.store.addMessage({ conversationId: dropped, topicId: a.store.conversation(dropped)!.activeTopicId, authorId: 'user', authorName: 'Me', text: 'keep me', kind: 'message' })
+    await a.sync()
+    await b.sync()
+    // What the web app writes when it merges a duplicate: move the message, then remove the chat.
+    const revision = (kind: string, id: string) => server.records.get(`${kind}/${id}`)!.revision
+    const moved = { ...server.records.get(`message/${line.id}`)!.data, conversationId: keep.id, topicId: keep.activeTopicId }
+    await server.request(new URL('https://douchat.test/api/sync'), { method: 'POST', body: JSON.stringify({ action: 'push', ops: [
+      { opId: 'move', kind: 'message', id: line.id, baseRevision: revision('message', line.id), data: moved },
+      { opId: 'drop', kind: 'conversation', id: dropped, baseRevision: revision('conversation', dropped), deleted: true }
+    ] }) })
+    await b.sync()
+    expect(b.store.conversation(dropped)).toBeUndefined()
+    expect(b.store.topicMessages(keep.id, keep.activeTopicId).map((message) => message.text)).toContain('keep me')
+  })
 })

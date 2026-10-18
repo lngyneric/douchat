@@ -16,12 +16,12 @@ import type {
   UpdateConversationInput
 } from '../shared/types'
 import type { UserMemoryDocument } from '../shared/userMemory'
-import { ensureBuiltInContact, greetNewChat, isCloudAgent, sendToCloudAgent } from './cloudChat'
+import { ensureBuiltInContact, greetNewChat, isCloudAgent, mergeDuplicateBuiltIns, sendToCloudAgent } from './cloudChat'
 import { DESKTOP_PRESENCE_STALE_MS, DESKTOP_RPC, DESKTOP_RPC_TIMEOUT_MS, decodeRpcValue, encodeRpcValue, type DesktopPresence, type DesktopRpcCall, type DesktopRpcMethod } from '../shared/desktopRpc'
 import { createCloudAgent, createGroup, deleteAgent as deleteCloudAgent, updateAgent as updateCloudAgent } from './agents'
 import { siteOrigin } from './site'
 import { WebSocial } from './webSocial'
-import { canRunCloudGroup, sendToCloudGroup } from './cloudGroup'
+import { canRunCloudGroup, runCloudGroupRound, sendToCloudGroup } from './cloudGroup'
 import { WebSync, type Mutation } from './webSync'
 
 /**
@@ -111,10 +111,17 @@ export function createWebApi(): DouchatApi {
     if (!sync) {
       sync = new WebSync(() => token, signOutLocally)
       sync.subscribe(() => { snapshot = undefined; const next = currentSnapshot(); for (const listener of snapshotListeners) listener(next) })
+      // A desktop that syncs later can bring a second built-in Dr. Dou; fold it in when it shows up.
+      let merging = false
+      sync.subscribe(() => {
+        if (merging || !sync || sync.all<AgentConfig>('agent').filter((agent) => agent.systemRole === 'admin').length < 2) return
+        merging = true
+        void mergeDuplicateBuiltIns(sync).catch(() => undefined).finally(() => { merging = false })
+      })
     }
     return sync.start().then(() => {
       // An account that never used the desktop still gets Dr. Dou.
-      if (sync && user) void ensureBuiltInContact(sync, user, service).catch(() => undefined)
+      if (sync && user) void mergeDuplicateBuiltIns(sync).then(() => ensureBuiltInContact(sync!, user!, service)).catch(() => undefined)
     })
   }
   const refresh = () => { snapshot = undefined; const next = currentSnapshot(); for (const listener of snapshotListeners) listener(next) }
@@ -300,6 +307,17 @@ export function createWebApi(): DouchatApi {
   const viaDesktop = <M extends DesktopRpcMethod>(method: M, local?: (...args: Parameters<DouchatApi[M]>) => ReturnType<DouchatApi[M]>) =>
     ((...args: Parameters<DouchatApi[M]>) => desktopOnline() || !local ? desktop(method, args) : local(...args)) as DouchatApi[M]
 
+  /** Show a group's planning and replying state while its cloud agents answer in this tab. */
+  async function answerInGroup(group: Conversation, run: (onActivity: (phase: 'planning' | 'replying', agentIds: string[]) => void) => Promise<void>): Promise<void> {
+    const show = (phase: 'planning' | 'replying', agentIds: string[]) => {
+      replying.set(group.id, { activity: { conversationId: group.id, topicId: group.activeTopicId, phase, agentIds, label: agentIds.map((id) => sync?.get<AgentConfig>('agent', id)?.name ?? '').join(', '), startedAt: Date.now() } })
+      refresh()
+    }
+    show('planning', [])
+    try { await run(show) }
+    finally { replying.delete(group.id); refresh() }
+  }
+
   const editConversation = (id: string, edit: (conversation: Conversation) => void): Mutation => ({
     kind: 'conversation',
     id,
@@ -450,27 +468,29 @@ export function createWebApi(): DouchatApi {
         replying.set(conversationId, { activity })
         refresh()
         const draftId = crypto.randomUUID()
+        const posts: ChatMessage[] = []
         try {
           await sendToCloudAgent({ sync, token, user, agent, conversation: target, text: text.trim(), replyId: draftId, hooks: { onText: (reply) => {
             replying.set(conversationId, { activity, draft: { id: draftId, conversationId, topicId: activity.topicId, authorId: agent.id, authorName: agent.name, text: reply, kind: 'message', createdAt: Date.now() } })
             refresh()
-          }, onFinish: () => { replying.delete(conversationId) } } })
+          }, onFinish: () => { replying.delete(conversationId) }, onGroupPost: (post) => posts.push(post) } })
         } finally {
           replying.delete(conversationId)
           refresh()
+        }
+        // Like a desktop, a group post that mentions members runs once its sender is done.
+        const [syncNow, tokenNow, userNow] = [sync, token, user]
+        for (const post of posts) {
+          const group = conversation(post.conversationId)
+          if (!group || replying.has(group.id)) continue
+          await answerInGroup(group, (onActivity) => runCloudGroupRound({ sync: syncNow, token: tokenNow, user: userNow, conversation: group, trigger: post, onActivity })).catch(() => undefined)
         }
         return
       }
       if (target && !desktopOnline() && sync && token && user && canRunCloudGroup(sync, target)) {
         // With no desktop online, the group's cloud agents answer right here.
         if (replying.has(conversationId)) throw new Error('This conversation is still replying')
-        const show = (phase: 'planning' | 'replying', agentIds: string[]) => {
-          replying.set(conversationId, { activity: { conversationId, topicId: target.activeTopicId, phase, agentIds, label: agentIds.map((id) => sync?.get<AgentConfig>('agent', id)?.name ?? '').join(', '), startedAt: Date.now() } })
-          refresh()
-        }
-        show('planning', [])
-        try { await sendToCloudGroup({ sync, token, user, conversation: target, text: text.trim(), onActivity: show }) }
-        finally { replying.delete(conversationId); refresh() }
+        await answerInGroup(target, (onActivity) => sendToCloudGroup({ sync: sync!, token: token!, user: user!, conversation: target, text: text.trim(), onActivity }))
         return
       }
       const request: WebSendRequest = { id: crypto.randomUUID(), conversationId, text: text.trim(), createdAt: Date.now(), state: 'pending' }

@@ -19,12 +19,31 @@ export function canRunCloudGroup(sync: WebSync, conversation: Conversation): boo
   return conversation.type === 'group' && conversation.agentIds.some((id) => isCloudAgent(sync.get<AgentConfig>('agent', id)))
 }
 
+type Activity = (phase: 'planning' | 'replying', agentIds: string[]) => void
+
+/** The human posts in the group, and its cloud agents answer. */
 export async function sendToCloudGroup(params: {
-  sync: WebSync; token: string; user: DesktopAuthUser; conversation: Conversation; text: string
-  onActivity: (phase: 'planning' | 'replying', agentIds: string[]) => void
+  sync: WebSync; token: string; user: DesktopAuthUser; conversation: Conversation; text: string; onActivity: Activity
 }): Promise<void> {
-  const { sync, token, user, conversation, text, onActivity } = params
-  const topicId = conversation.activeTopicId
+  const { sync, conversation, user, text } = params
+  const message: ChatMessage = { id: crypto.randomUUID(), conversationId: conversation.id, topicId: conversation.activeTopicId, authorId: 'user', authorName: user.name, text, kind: 'message', createdAt: Date.now() }
+  await sync.mutate([
+    { kind: 'message', id: message.id, apply: () => message as unknown as SyncRecord },
+    { kind: 'conversation', id: conversation.id, apply: (current) => current ? { ...current, updatedAt: message.createdAt } : null }
+  ])
+  await runCloudGroupRound({ ...params, trigger: message })
+}
+
+/**
+ * One round of the group answering an already stored message: the human's, or
+ * an agent's public post that mentions members (send_group_message), which on
+ * a desktop also runs once its sender finishes.
+ */
+export async function runCloudGroupRound(params: {
+  sync: WebSync; token: string; user: DesktopAuthUser; conversation: Conversation; trigger: ChatMessage; onActivity: Activity
+}): Promise<void> {
+  const { sync, token, user, conversation, trigger: message, onActivity } = params
+  const topicId = message.topicId
   const topic = conversation.topics.find((item) => item.id === topicId)
   const language = interfaceLanguage()
   const agents = new Map(conversation.agentIds.flatMap((id) => { const agent = sync.get<AgentConfig>('agent', id); return agent ? [[id, agent] as const] : [] }))
@@ -33,8 +52,6 @@ export async function sendToCloudGroup(params: {
     leadMemberId: conversation.leadAgentId,
     members: [...agents.values()].map((agent): GroupMember => ({ id: agent.id, name: agent.name, description: [agent.role, agent.instructions].filter(Boolean).join(' — ') }))
   }
-  const now = Date.now()
-  const message: ChatMessage = { id: crypto.randomUUID(), conversationId: conversation.id, topicId, authorId: 'user', authorName: user.name, text, kind: 'message', createdAt: now }
   const save = (messages: ChatMessage[]) => sync.mutate([
     ...messages.map((item) => ({ kind: 'message' as const, id: item.id, apply: () => item as unknown as SyncRecord })),
     { kind: 'conversation', id: conversation.id, apply: (current) => {
@@ -45,7 +62,6 @@ export async function sendToCloudGroup(params: {
     } }
   ])
   const notice = (key: string, values: Record<string, string | number> = {}) => save([{ id: crypto.randomUUID(), conversationId: conversation.id, topicId, authorId: 'system', authorName: 'Douchat', kind: 'system', createdAt: Date.now(), ...groupNotice(language, key, values) }])
-  await save([message])
 
   const asGroupMessage = (item: ChatMessage): GroupMessage => item.authorId === 'user'
     ? { id: item.id, role: 'user', content: item.text }

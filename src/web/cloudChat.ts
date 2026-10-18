@@ -5,6 +5,7 @@ import type { SyncRecord } from '../shared/cloudSync'
 import { supportedInterfaceLanguage } from '../shared/language'
 import type { AgentConfig, BuiltInAgentManifest, ChatMessage, Conversation, DesktopAuthUser, Topic } from '../shared/types'
 import type { WebSync } from './webSync'
+import { addressesEveryone, mentionedMembers } from '../shared/bot/mentions'
 import { agentManagementPrompt, agentManagementTools, isSystemAdmin, runAgentManagementTool } from './cloudTools'
 
 /**
@@ -60,6 +61,57 @@ export async function ensureBuiltInContact(sync: WebSync, user: DesktopAuthUser,
     { kind: 'conversation', id: conversation.id, apply: (current) => current ?? conversation as unknown as SyncRecord }
   ])
   await welcomeToBuiltIn(sync, sync.get<AgentConfig>('agent', id) ?? agent)
+}
+
+/**
+ * One built-in Dr. Dou per account. A desktop from before account-derived ids
+ * gave it a random id, so an account that first met the web app can end up
+ * with two once that desktop syncs. Keep the oldest (the one that desktop
+ * already points to), move the other's messages into its chat, repoint groups
+ * and routines, and remove the duplicate. Every change syncs to the desktop.
+ */
+export async function mergeDuplicateBuiltIns(sync: WebSync): Promise<boolean> {
+  const admins = sync.all<AgentConfig>('agent').filter((agent) => agent.systemRole === 'admin')
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+  if (admins.length < 2) return false
+  const [keep, ...duplicates] = admins
+  const conversations = sync.all<Conversation>('conversation')
+  const directOf = (agentId: string) => conversations.filter((item) => item.type === 'direct' && item.agentIds[0] === agentId && !item.id.startsWith('im-'))
+  const target = directOf(keep.id)[0]
+  if (!target) return false
+  const gone = new Set(duplicates.map((agent) => agent.id))
+  const swap = (id: string) => gone.has(id) ? keep.id : id
+  const record = (value: unknown) => value as SyncRecord
+  const mutations: import('./webSync').Mutation[] = []
+  const removedChats = new Set(duplicates.flatMap((agent) => directOf(agent.id).map((item) => item.id)))
+  // Messages first: a desktop applies the chat's removal before them, then re-adds them in the kept chat.
+  for (const message of sync.all<ChatMessage>('message')) {
+    if (!removedChats.has(message.conversationId)) continue
+    if (message.id.startsWith('greeting:')) { mutations.push({ kind: 'message', id: message.id, apply: () => null }); continue }
+    mutations.push({ kind: 'message', id: message.id, apply: (current) => current ? record({
+      ...current, conversationId: target.id, topicId: target.activeTopicId, authorId: swap(String(current.authorId))
+    }) : null })
+  }
+  for (const conversation of conversations) {
+    if (removedChats.has(conversation.id) || !conversation.agentIds.some((id) => gone.has(id))) continue
+    mutations.push({ kind: 'conversation', id: conversation.id, apply: (current) => {
+      if (!current) return null
+      const next = structuredClone(current) as unknown as Conversation
+      next.agentIds = [...new Set(next.agentIds.map(swap))]
+      if (next.leadAgentId) next.leadAgentId = swap(next.leadAgentId)
+      return record(next)
+    } })
+  }
+  for (const routine of sync.all<import('../shared/types').Routine>('routine')) {
+    if (!gone.has(routine.agentId) && !removedChats.has(routine.conversationId)) continue
+    mutations.push({ kind: 'routine', id: routine.id, apply: (current) => current ? record({
+      ...current, agentId: swap(routine.agentId), conversationId: removedChats.has(routine.conversationId) ? target.id : routine.conversationId
+    }) : null })
+  }
+  for (const id of removedChats) mutations.push({ kind: 'conversation', id, apply: () => null })
+  for (const agent of duplicates) mutations.push({ kind: 'agent', id: agent.id, apply: () => null })
+  await sync.mutate(mutations)
+  return true
 }
 
 export const interfaceLanguage = () => supportedInterfaceLanguage(document.documentElement.lang || navigator.language)
@@ -134,8 +186,8 @@ export function prompt(agent: AgentConfig, user: DesktopAuthUser): string {
     agent.labels ? `Personality: ${agent.labels}` : '',
     // Earlier turns in this chat may come from the desktop app, where agents have tools.
     isSystemAdmin(agent)
-      ? `You are answering in the Douchat web app. Here your only tools message other agents and manage the user's contacts and groups; you cannot read or write files, run commands, open folders or use connectors, even if earlier messages in this chat did. If a request needs that, say it works when the user asks from the Douchat desktop app. Earlier replies in this chat may have said other agents could not be messaged or contacts managed here; that is no longer true.\n\n${agentManagementPrompt}`
-      : 'You are answering in the Douchat web app. Here your only tool is message_agent: you cannot read or write files, run commands, open folders, use connectors or manage agents, even if earlier messages in this chat did. If a request needs that, say it works when the user asks from the Douchat desktop app, and help as far as you can with conversation alone.',
+      ? `You are answering in the Douchat web app. Here your only tools message other agents, post in group chats you belong to, and manage the user's contacts and groups; you cannot read or write files, run commands, open folders or use connectors, even if earlier messages in this chat did. If a request needs that, say it works when the user asks from the Douchat desktop app. Earlier replies in this chat may have said other agents could not be messaged, groups posted to, or contacts managed here; that is no longer true. To announce, start or post something IN A GROUP, use send_group_message (after list_groups if the target is unclear) and @mention the members who should respond; do not tell the human to post it themselves.\n\n${agentManagementPrompt}`
+      : 'You are answering in the Douchat web app. Here your only tools are message_agent, list_groups and send_group_message: you cannot read or write files, run commands, open folders, use connectors or manage agents, even if earlier messages in this chat did. If a request needs that, say it works when the user asks from the Douchat desktop app, and help as far as you can with conversation alone. To announce, start or post something in a group, use send_group_message and @mention the members who should respond.',
     'Reply in the language the user writes in. Keep answers clear and concise; use Markdown when it helps.'
   ].filter(Boolean).join('\n\n')
 }
@@ -274,11 +326,55 @@ async function messageAgent(context: { sync: WebSync; token: string; user: Deskt
   return `${target.name} replied (saved in their private chat). Use this as source material to answer the human’s original question in your own voice. Attribute the findings; do not paste the reply verbatim or say you are still waiting.\nRecipient reply:\n${text}`
 }
 
+const groupMessagingTools = [
+  { type: 'function' as const, function: { name: 'list_groups', description: 'Find local group chats you belong to, including their exact IDs, names and members. Use before posting to an uncertain group target.', parameters: { type: 'object', properties: {} } } },
+  { type: 'function' as const, function: {
+    name: 'send_group_message',
+    description: 'Post a real public message in a local group as yourself. This is group delivery, not a private message to an individual member. All group members can see the message. @mention members you want to answer; they reply in the group after you finish.',
+    parameters: { type: 'object', properties: {
+      group: { type: 'string', description: 'Exact group ID from list_groups or create_group, or an unambiguous exact group name.' },
+      message: { type: 'string', description: 'Public message to post to the group as yourself.' }
+    }, required: ['group', 'message'] }
+  } }
+]
+
+/** The desktop's list_groups and send_group_message, over synced records. */
+async function groupMessaging(sync: WebSync, agent: AgentConfig, name: string, args: Record<string, unknown>, callId: string, onPost?: (message: ChatMessage) => void): Promise<string> {
+  const groups = sync.all<Conversation>('conversation').filter((item) => item.type === 'group' && !item.remoteRoomId && item.agentIds.includes(agent.id))
+  const memberOf = (group: Conversation) => group.agentIds.flatMap((id) => { const member = sync.get<AgentConfig>('agent', id); return member ? [{ id, name: member.name }] : [] })
+  if (name === 'list_groups') return JSON.stringify(groups.map((group) => ({ id: group.id, name: group.name, createdAt: group.createdAt, members: memberOf(group) })))
+  const text = typeof args.message === 'string' ? args.message.trim() : ''
+  const matches = groups.filter((group) => group.id === args.group || group.name === args.group)
+  const group = matches.length === 1 ? matches[0] : undefined
+  if (!group || !text || text.length > 16000) return 'Message not sent. Choose one exact group you belong to using list_groups and provide a nonempty message up to 16000 characters.'
+  const members = memberOf(group)
+  const recipients = (addressesEveryone(text) ? members : mentionedMembers(text, members)).filter((member) => member.id !== agent.id)
+  const message: ChatMessage = {
+    id: `${group.id}:${agent.id}:tool:${callId}`, conversationId: group.id, topicId: group.activeTopicId, authorId: agent.id, authorName: agent.name,
+    text, kind: 'message', createdAt: Date.now(), ...(recipients.length ? { recipients } : {})
+  }
+  await sync.mutate([
+    { kind: 'message', id: message.id, apply: (current) => current ?? message as unknown as SyncRecord },
+    { kind: 'conversation', id: group.id, apply: (current) => {
+      if (!current) return null
+      const next = structuredClone(current) as unknown as Conversation
+      next.unread = (next.unread ?? 0) + 1
+      next.hidden = false
+      next.updatedAt = message.createdAt
+      return next as unknown as SyncRecord
+    } }
+  ])
+  if (recipients.length) onPost?.(message)
+  return `Posted your message publicly in “${group.name}”.${recipients.length ? ` ${recipients.map((member) => member.name).join(', ')} will answer there after you finish.` : ''}`
+}
+
 export interface CloudReplyHooks {
   /** Reply text so far, for the "typing" bubble. */
   onText: (text: string) => void
   /** Called just before the final reply (or failure notice) is stored. */
   onFinish: () => void
+  /** A public group post that mentions members, for the group to answer once this reply ends. */
+  onGroupPost?: (message: ChatMessage) => void
 }
 
 /**
@@ -320,7 +416,7 @@ export async function sendToCloudAgent(params: {
 
   let reply = ''
   try {
-    const tools = [messageAgentTool, ...(isSystemAdmin(agent) ? agentManagementTools : [])]
+    const tools = [messageAgentTool, ...groupMessagingTools, ...(isSystemAdmin(agent) ? agentManagementTools : [])]
     const context = { sync, ownerId: user.id, self: agent, onCreated: (id: string) => { void greetNewChat(sync, token, id).catch(() => undefined) } }
     const messages: ChatTurn[] = [{ role: 'system', content: prompt(agent, user) }, ...history]
     const model = await modelFor(agent, token)
@@ -335,7 +431,9 @@ export async function sendToCloudAgent(params: {
         try { args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown> } catch { /* reported below as missing fields */ }
         const result = call.function.name === 'message_agent'
           ? await messageAgent({ sync, token, user, caller: agent, conversationId: conversation.id, topicId }, args)
-          : await runAgentManagementTool(context, call.function.name, args)
+          : call.function.name === 'list_groups' || call.function.name === 'send_group_message'
+            ? await groupMessaging(sync, agent, call.function.name, args, call.id, hooks.onGroupPost)
+            : await runAgentManagementTool(context, call.function.name, args)
         messages.push({ role: 'tool', tool_call_id: call.id, content: result })
       }
       // Text before a tool call is a preamble; keep it and separate the follow-up.
