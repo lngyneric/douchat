@@ -318,6 +318,17 @@ export function createWebApi(): DouchatApi {
     finally { replying.delete(group.id); refresh() }
   }
 
+  /**
+   * For changes a person expects to see at once (read, pinned, muted, shown):
+   * the page applies them before any request leaves, so answer now and let
+   * the cloud write finish in the background.
+   */
+  function applyNow(mutations: Mutation[]): Promise<AppSnapshot> {
+    if (!sync) return Promise.reject(new Error('Sign in first.'))
+    void sync.mutate(mutations).catch((error) => window.douchat?.reportDiagnostic?.('web.sync-write-failed', String(error)))
+    return Promise.resolve(currentSnapshot())
+  }
+
   const editConversation = (id: string, edit: (conversation: Conversation) => void): Mutation => ({
     kind: 'conversation',
     id,
@@ -499,13 +510,21 @@ export function createWebApi(): DouchatApi {
     updateConversation: async (id, input: UpdateConversationInput) => {
       if (social?.roomOf(id)) {
         const room = social.roomOf(id)!
-        if (input.name?.trim() && room.kind === 'group' && input.name.trim() !== room.name) await social.action({ action: 'rename-room', roomId: room.id, name: input.name.trim() })
-        social.setPrefs(id, Object.fromEntries(Object.entries({ muted: input.muted, hidden: input.hidden, savedToContacts: input.savedToContacts }).filter(([, value]) => value !== undefined)))
+        if (input.name?.trim() && room.kind === 'group' && input.name.trim() !== room.name) {
+          await social.action({ action: 'rename-room', roomId: room.id, name: input.name.trim() })
+          void social.refresh().catch(() => undefined)
+        }
+        const prefs = Object.fromEntries(Object.entries({ muted: input.muted, hidden: input.hidden, savedToContacts: input.savedToContacts }).filter(([, value]) => value !== undefined))
+        if (Object.keys(prefs).length) social.setPrefs(id, prefs)
         if (input.manuallyUnread === false) social.markRead(id)
-        await social.refresh()
         return currentSnapshot()
       }
-      return mutate([editConversation(id, (next) => {
+      const current = conversation(id)
+      // Opening a chat asks to show it; nothing to write when it is already shown.
+      const flags = { savedToContacts: input.savedToContacts, muted: input.muted, hidden: input.hidden } as const
+      const onlyFlags = Object.keys(input).every((key) => key in flags || key === 'expectedRevision')
+      if (current && onlyFlags && Object.entries(flags).every(([key, value]) => value === undefined || Boolean(current[key as keyof typeof flags]) === value)) return currentSnapshot()
+      return (onlyFlags ? applyNow : mutate)([editConversation(id, (next) => {
       if (input.savedToContacts !== undefined) next.savedToContacts = input.savedToContacts
       if (input.muted !== undefined) next.muted = input.muted
       if (input.hidden !== undefined) next.hidden = input.hidden
@@ -519,15 +538,15 @@ export function createWebApi(): DouchatApi {
     },
     setConversationPinned: async (id, pinned) => {
       if (social?.roomOf(id)) { social.setPrefs(id, { pinned: pinned || undefined }); return currentSnapshot() }
-      return mutate([editConversation(id, (next) => { next.pinned = pinned || undefined })])
+      return applyNow([editConversation(id, (next) => { next.pinned = pinned || undefined })])
     },
     markConversationRead: (id) => {
       if (social?.roomOf(id)) { social.markRead(id); return Promise.resolve(currentSnapshot()) }
       const current = conversation(id)
       if (!current || (!current.unread && !current.manuallyUnread)) return Promise.resolve(currentSnapshot())
-      return mutate([editConversation(id, (next) => { next.unread = 0; next.manuallyUnread = false; next.readAt = Date.now() })])
+      return applyNow([editConversation(id, (next) => { next.unread = 0; next.manuallyUnread = false; next.readAt = Date.now() })])
     },
-    markAllConversationsRead: () => mutate(currentSnapshot().conversations.filter((item) => {
+    markAllConversationsRead: () => applyNow(currentSnapshot().conversations.filter((item) => {
       if (social?.roomOf(item.id)) { social.markRead(item.id); return false }
       return item.unread || item.manuallyUnread
     })
