@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { DESKTOP_PRESENCE_MS, DESKTOP_RPC_TIMEOUT_MS, type DesktopPresence, type DesktopRpcCall } from '../shared/desktopRpc'
-import { ACTIVITY_REFRESH_MS, WEB_REQUEST_TTL_MS, type RoomReadMark, type SupportShare, type SyncedActivity, type SyncChange, type SyncOp, type SyncPushResult, type SyncRecord, type WebSendRequest } from '../shared/cloudSync'
+import { ACTIVITY_REFRESH_MS, SYNC_PUSH_ACCEPTS, WEB_REQUEST_TTL_MS, type RoomReadMark, type SupportShare, type SyncedActivity, type SyncChange, type SyncOp, type SyncPushResult, type SyncRecord, type WebSendRequest } from '../shared/cloudSync'
 import type { CloudSyncStore } from './cloudSyncStore'
 
 /** What the sync client needs from the signed-in session. */
@@ -157,6 +157,7 @@ export class CloudSyncClient {
       for (const [index, result] of results.entries()) {
         const op = ops[index]
         // Another device's copy, or one left behind: take its revision and write again next time.
+        if (result.status === 'rejected') { if (op.deleted) this.published.delete(op.id); continue }
         const revision = result.status === 'applied' ? result.revision : result.current.revision
         if (op.deleted) {
           if (result.status === 'applied') this.published.delete(op.id)
@@ -196,6 +197,7 @@ export class CloudSyncClient {
     for (const [index, result] of results.entries()) {
       const mark = ahead[index]
       if (result.status === 'applied') { this.roomReads.set(mark.roomId, { readAt: mark.readAt, revision: result.revision }); continue }
+      if (result.status === 'rejected') continue
       // Someone else wrote first: keep theirs if it is later, otherwise write ours on top.
       const current = result.current.data as unknown as RoomReadMark | undefined
       this.roomReads.set(mark.roomId, { readAt: current?.readAt ?? 0, revision: result.current.revision })
@@ -263,6 +265,7 @@ export class CloudSyncClient {
     const [result] = (await this.call<{ results: SyncPushResult[] }>(running, {
       action: 'push', ops: [{ opId: randomUUID(), kind: 'device', id: data.id, baseRevision: this.presenceRevision, data: data as unknown as SyncRecord }]
     })).results
+    if (result.status === 'rejected') return
     this.presenceRevision = result.status === 'applied' ? result.revision : result.current.revision
     if (result.status === 'conflict') await this.announce(running)
   }
@@ -335,7 +338,7 @@ export class CloudSyncClient {
     for (let rounds = 0; rounds < 20; rounds++) {
       const pending = this.store.pending(running.ownerId)
       if (!pending.length) return
-      const { results } = await this.call<{ results: SyncPushResult[] }>(running, { action: 'push', ops: pending.map((entry): SyncOp => entry.op) })
+      const { results } = await this.call<{ results: SyncPushResult[] }>(running, { action: 'push', accepts: SYNC_PUSH_ACCEPTS, ops: pending.map((entry): SyncOp => entry.op) })
       if (this.store.acknowledge(running.ownerId, pending, results)) this.onChanged()
     }
   }

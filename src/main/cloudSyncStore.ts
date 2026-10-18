@@ -94,6 +94,8 @@ export interface CloudSyncHost {
   loadAgent(agent: AgentConfig): AgentConfig
   /** Persist profile files that arrived from the cloud. */
   saveAgentFiles(agent: AgentConfig, files: NonNullable<AgentConfig['systemFiles']>): void
+  /** A record the cloud refused; it remains local only. */
+  onRejected?(kind: SyncKind, id: string, error: string): void
 }
 
 export class CloudSyncStore {
@@ -194,6 +196,12 @@ export class CloudSyncStore {
         const { op } = entry
         if (result.status === 'applied') {
           this.setShadow(op.kind, op.id, ownerId, result.revision, op.deleted ? null : op.data!)
+          this.dropOutbox(op.kind, op.id, entry.outboxOpId)
+          continue
+        }
+        if (result.status === 'rejected') {
+          // The cloud cannot hold this record; it stays on this computer and stops blocking the queue.
+          this.host.onRejected?.(op.kind, op.id, result.error)
           this.dropOutbox(op.kind, op.id, entry.outboxOpId)
           continue
         }

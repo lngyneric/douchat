@@ -47,6 +47,11 @@ export interface SyncOp {
 export type SyncPushResult =
   | { opId: string; status: 'applied'; revision: number; seq: number }
   | { opId: string; status: 'conflict'; current: SyncChange }
+  /** The service will not store this write (sent only to clients that accept it). */
+  | { opId: string; status: 'rejected'; error: string }
+
+/** Sent with every push: this client handles a per-write rejection instead of a refused request. */
+export const SYNC_PUSH_ACCEPTS = ['rejected'] as const
 
 /** `revision` is each store's own edit counter, never a cloud version. */
 const DEVICE_FIELDS: Record<SyncKind, readonly string[]> = {

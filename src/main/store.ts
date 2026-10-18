@@ -311,7 +311,8 @@ export class DouchatStore {
     for (const agent of this.agents) this.profileFiles.load(agent)
     this.cloudSync = new CloudSyncStore(this.db, {
       loadAgent: (agent) => this.profileFiles?.load(agent) ?? agent,
-      saveAgentFiles: (agent, files) => this.profileFiles?.save(agent, files)
+      saveAgentFiles: (agent, files) => this.profileFiles?.save(agent, files),
+      onRejected: (kind, id, error) => console.warn(`[douchat] Cloud sync skipped ${kind} ${id}: ${error}`)
     })
     this.migrateAccountSensitiveMeta()
     this.backfillAttachmentOwnership()

@@ -23,6 +23,7 @@ function cloud() {
   const handle = (body: { action: string; ops?: SyncOp[]; after?: number }) => {
     if (body.action === 'push') {
       const results: SyncPushResult[] = body.ops!.map((op) => {
+        if (op.id.length > 300) return { opId: op.opId, status: 'rejected', error: 'too long' }
         const key = `${op.kind}/${op.id}`
         const current = records.get(key)
         if (current && current.revision !== op.baseRevision) {
@@ -245,5 +246,18 @@ describe('cloud sync between devices', () => {
     await b.sync()
     expect(b.store.conversation(dropped)).toBeUndefined()
     expect(b.store.topicMessages(keep.id, keep.activeTopicId).map((message) => message.text)).toContain('keep me')
+  })
+
+  it('skips a record the cloud refuses and keeps sending the rest', async () => {
+    const server = cloud()
+    const a = device(server)
+    await a.sync()
+    const chat = a.store.accountConversations[0]
+    const stuck = a.store.addMessage({ id: 'x'.repeat(301), conversationId: chat.id, topicId: chat.activeTopicId, authorId: 'user', authorName: 'Me', text: 'cannot sync', kind: 'message' })
+    const later = a.store.addMessage({ conversationId: chat.id, topicId: chat.activeTopicId, authorId: 'user', authorName: 'Me', text: 'after it', kind: 'message' })
+    await a.sync()
+    expect(server.records.has(`message/${stuck.id}`)).toBe(false)
+    expect(server.records.get(`message/${later.id}`)?.data).toMatchObject({ text: 'after it' })
+    expect(a.store.cloudSync.hasPending(ACCOUNT)).toBe(false)
   })
 })

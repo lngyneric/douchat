@@ -1,4 +1,4 @@
-import { type SyncChange, type SyncOp, type SyncPushResult, type SyncRecord, type SyncWireKind } from '../shared/cloudSync'
+import { SYNC_PUSH_ACCEPTS, type SyncChange, type SyncOp, type SyncPushResult, type SyncRecord, type SyncWireKind } from '../shared/cloudSync'
 
 /**
  * The web app's copy of the account, kept in memory and in step with the
@@ -69,17 +69,20 @@ export class WebSync {
     // Show the change right away; the cloud's answer settles it.
     for (const op of ops) this.setLocal(op.kind, op.id, op.data, undefined)
     this.emit()
-    const { results } = await this.call<{ results: SyncPushResult[] }>({ action: 'push', ops })
+    const { results } = await this.call<{ results: SyncPushResult[] }>({ action: 'push', accepts: SYNC_PUSH_ACCEPTS, ops })
     const retry: Mutation[] = []
+    let failure: Error | undefined
     for (const [index, result] of results.entries()) {
       const op = ops[index]
       if (result.status === 'applied') { this.setLocal(op.kind, op.id, op.data, result.revision); continue }
+      if (result.status === 'rejected') { failure ??= new Error(result.error); continue }
       const current = result.current
       this.setLocal(op.kind, op.id, current.deleted ? undefined : current.data ?? undefined, current.revision)
       if (!current.deleted) retry.push(sent[index])
     }
     this.emit()
     if (retry.length && attempt < 3) await this.mutate(retry, attempt + 1)
+    if (failure) throw failure
   }
 
   private setLocal(kind: SyncWireKind, id: string, data: SyncRecord | undefined, revision: number | undefined): void {
