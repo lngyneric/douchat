@@ -145,7 +145,9 @@ export class RoutineScheduler {
   private async runDueRoutines(): Promise<void> {
     if (this.disposed) return
     const now = Date.now()
-    const due = this.store.accountRoutines.filter((routine) => routine.enabled && routine.nextRunAt <= now)
+    // Synced routines from other computers run there, not here.
+    const due = this.store.accountRoutines.filter((routine) => routine.enabled && routine.nextRunAt <= now
+      && (!routine.deviceId || routine.deviceId === this.store.cloudSync.installId))
     const creditBlocked = await this.creditBlockedRoutineIds(due)
     const runnable = due.filter((routine) => !creditBlocked.has(routine.id))
 

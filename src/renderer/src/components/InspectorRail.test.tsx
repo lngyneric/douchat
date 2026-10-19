@@ -232,7 +232,7 @@ describe('chat details rail', () => {
     await renderRail(direct, vi.fn(), state)
 
     const options = [...container.querySelectorAll<HTMLButtonElement>('.detail-search-button')]
-    expect(options.map((button) => button.textContent?.trim())).toEqual(['Search chat history', 'View scheduled tasks'])
+    expect(options.map((button) => button.textContent?.trim())).toEqual(['Search chat history', 'View scheduled tasks', 'Share with support'])
 
     await act(async () => options[0].click())
     expect(document.querySelector('[aria-labelledby="chat-history-title"]')).not.toBeNull()

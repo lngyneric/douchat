@@ -26,6 +26,7 @@ import type {
 } from '../../shared/types'
 import { SettingsPanel, type SettingsTab } from './components/SettingsPanel'
 import { AppRail, type AppView } from './components/AppRail'
+import { readRoute, resolveConversation, showRoute, usesWebRoutes } from './webRoute'
 import { BotInbox } from './components/BotInbox'
 import { MemberProfilePopover, type ProfileAnchor } from './components/MemberProfilePopover'
 import { ContactCard, SelfProfileCard } from './components/ContactCard'
@@ -71,14 +72,34 @@ function WorkspaceApp(): ReactElement {
   const [messageQueue] = useState(() => new MessageQueue(setQueuedMessages))
   useEffect(() => { messageQueue.kick() }, [snapshot, messageQueue])
   const detachedId = new URLSearchParams(window.location.search).get('conversation')
+  const [initialRoute] = useState(() => usesWebRoutes() ? readRoute() : undefined)
   const [activeId, setActiveId] = useState(detachedId || '')
-  const [view, setView] = useState<AppView>('chats')
-  const [settingsOpen, updateSettingsOpen] = useState(false)
+  /** A conversation named by the web address, opened once the inbox has loaded. */
+  const routedConversation = useRef(initialRoute?.conversationId)
+  const [view, setView] = useState<AppView>(initialRoute?.view ?? 'chats')
+  const [settingsOpen, updateSettingsOpen] = useState(Boolean(initialRoute?.settingsTab))
   function setSettingsOpen(open: boolean): void {
     reportDiagnostic(open ? 'settings.open-request' : 'settings.close')
     updateSettingsOpen(open)
   }
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('profile')
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(initialRoute?.settingsTab ?? 'profile')
+  // The web app mirrors the page in its address, and follows Back/Forward.
+  useEffect(() => {
+    if (usesWebRoutes()) showRoute({ view, conversationId: view === 'chats' ? activeId || undefined : undefined, settingsTab: settingsOpen ? settingsTab : undefined })
+  }, [view, activeId, settingsOpen, settingsTab])
+  useEffect(() => {
+    if (!usesWebRoutes()) return
+    const follow = () => {
+      const route = readRoute()
+      setView(route.view)
+      const routed = resolveConversation(route.conversationId, snapshotRef.current?.conversations ?? [])
+      if (routed) setActiveId(routed)
+      updateSettingsOpen(Boolean(route.settingsTab))
+      if (route.settingsTab) setSettingsTab(route.settingsTab)
+    }
+    window.addEventListener('popstate', follow)
+    return () => window.removeEventListener('popstate', follow)
+  }, [])
   const [creditsRefreshToken, setCreditsRefreshToken] = useState(0)
   const [creditsAttention, setCreditsAttention] = useState(false)
   const knownCreditErrors = useRef<Set<string> | null>(null)
@@ -212,6 +233,11 @@ function WorkspaceApp(): ReactElement {
   }, [toast])
 
   useEffect(() => {
+    if (snapshot && routedConversation.current) {
+      const routed = resolveConversation(routedConversation.current, snapshot.conversations)
+      if (routed || snapshot.conversations.length) routedConversation.current = undefined
+      if (routed) { setActiveId(routed); return }
+    }
     if (snapshot && !snapshot.conversations.some((conversation) => conversation.id === activeId && (!conversation.hidden || detachedId))) {
       const welcome = snapshot.defaultConversationId
         ? snapshot.conversations.find((item) => item.id === snapshot.defaultConversationId && !item.hidden)
@@ -243,9 +269,9 @@ function WorkspaceApp(): ReactElement {
   }, [authState.status === 'signed-in' ? authState.user.id : ''])
 
   // A newly signed-in account lands directly in its Dr. Dou welcome chat.
-  // Detached chat windows keep the explicit conversation from their URL.
+  // Detached chat windows and web links keep the conversation from their URL.
   useEffect(() => {
-    if (detachedId || authState.status !== 'signed-in' || !snapshot?.defaultConversationId) return
+    if (detachedId || initialRoute?.conversationId || authState.status !== 'signed-in' || !snapshot?.defaultConversationId) return
     if (snapshot.conversations.some((item) => item.id === snapshot.defaultConversationId && !item.hidden)) {
       setActiveId(snapshot.defaultConversationId)
     }

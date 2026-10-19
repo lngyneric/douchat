@@ -2774,7 +2774,8 @@ html[data-platform='win32'] .add-friend-modal::backdrop {
 }
 
 /* Align the profile top with the 28px search field centered in its 58px row. */
-html[data-platform='win32'] .messenger .app-rail {
+/* No traffic lights to clear on Windows or in the browser. */
+html:is([data-platform='win32'], [data-platform='web']) .messenger .app-rail {
   padding-top: 15px;
 }
 
@@ -5490,6 +5491,16 @@ html[data-platform='win32'] .messenger .app-rail {
 .routine-record-actions button.danger:hover:not(:disabled) { border-color: #f0cfcb; background: #fff3f1; color: #a44338; }
 .routine-record-actions button:disabled { opacity: .4; cursor: default; }
 
+.support-share-modal { width: min(560px, calc(100vw - 64px)); height: min(620px, calc(100vh - 64px)); }
+.support-share-form { display: grid; gap: 10px; padding: 0 20px 14px; border-bottom: 1px solid var(--line); }
+.support-share-form > p { margin: 0; color: var(--muted); font-size: calc(12px * var(--font-scale, .92)); line-height: 1.55; }
+.support-share-form textarea { width: 100%; resize: none; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); color: var(--ink); font: inherit; font-size: calc(12.5px * var(--font-scale, .92)); }
+.support-share-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.support-share-actions [role='radiogroup'] { display: flex; gap: 4px; padding: 3px; border-radius: 9px; background: var(--surface); }
+.support-share-actions [role='radio'] { padding: 5px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: calc(12px * var(--font-scale, .92)); cursor: pointer; }
+.support-share-actions [role='radio'].selected { background: var(--canvas); color: var(--ink); box-shadow: 0 1px 2px rgba(16, 23, 36, .08); }
+.routine-record-actions button.support-share-revoke { width: auto; padding: 0 10px; font: inherit; font-size: calc(12px * var(--font-scale, .92)); }
+.routine-record-copy > header span[data-status='revoked'], .routine-record-copy > header span[data-status='expired'] { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--faint); }
 [data-theme='dark'] .conversation-records-modal { background: #202124; box-shadow: 0 26px 90px rgba(0, 0, 0, .52); }
 [data-theme='dark'] .records-search { background: #292a2f; }
 [data-theme='dark'] .records-search:focus-within { background: #25262a; }
@@ -7157,3 +7168,29 @@ html.native-dialog-window,
 .daemon-command code { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); font-size: 12px; word-break: break-all; white-space: pre-wrap; user-select: all; }
 .daemon-command button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
 .typing-remote-text { display: block; margin-top: 6px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--ink); font-size: calc(13px * var(--font-scale, .92)); line-height: 1.5; }
+
+/* The list and the conversation sit as one inset card on the rail surface:
+   a small gutter on the top, right and bottom, rounded at the outer corners. */
+.messenger.app-shell.with-rail:not(.detached-chat) { --pane-inset: 6px; --pane-radius: 10px; background: var(--rail); }
+.messenger.app-shell.with-rail:not(.detached-chat) > .app-rail { border-right: 0; }
+.messenger.app-shell.with-rail:not(.detached-chat) > .app-rail + * {
+  margin: var(--pane-inset) 0;
+  border-radius: var(--pane-radius) 0 0 var(--pane-radius);
+  box-shadow: 0 0 0 .5px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.messenger.app-shell.with-rail:not(.detached-chat) > .app-rail + * + * {
+  margin: var(--pane-inset) var(--pane-inset) var(--pane-inset) 0;
+  border-radius: 0 var(--pane-radius) var(--pane-radius) 0;
+  overflow: hidden;
+  box-shadow: 0 0 0 .5px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+/* The list rail stays overflow-visible for its resize handle, so round the
+   scrolling list itself to keep row highlights inside the card corner. */
+.messenger.app-shell.with-rail:not(.detached-chat) > .app-rail + * :is(.conversation-list, .contact-list) { border-bottom-left-radius: var(--pane-radius); }
+/* Overlay scrollbars: the native bar is hidden so it never takes a gutter
+   from the rows, and OverlayScrollbar draws a thin thumb only while scrolling. */
+.messenger :is(.conversation-list, .message-scroll, .contact-list, .inspector-scroll) { scrollbar-width: none; }
+.messenger :is(.conversation-list, .message-scroll, .contact-list, .inspector-scroll)::-webkit-scrollbar { display: none; }
+.overlay-scroll-thumb { position: absolute; top: 0; left: -4px; z-index: 6; width: 3px; border-radius: 999px; background: rgba(0, 0, 0, 0.22); opacity: 0; pointer-events: none; transition: opacity 260ms; }
+.overlay-scroll-thumb.visible { opacity: 1; transition-duration: 80ms; }
+[data-theme='dark'] .overlay-scroll-thumb { background: rgba(255, 255, 255, 0.26); }

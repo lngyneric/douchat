@@ -1,10 +1,11 @@
 import type { SocialSnapshot } from '../../../shared/social'
 import { t, tr } from '../preferences'
 import { ChevronRight, Search, Star, UsersRound, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { AgentConfig, AppSnapshot, Conversation } from '../../../shared/types'
 import { contactSections, matchesContactQuery } from '../../../shared/bot/contacts'
+import { OverlayScrollbar } from './OverlayScrollbar'
 import { AgentAvatar, ConversationAvatar, UserAvatar, SidebarResizer, agentDisplayName, agentSourceLabel } from './common'
 
 export type ContactSelection = { kind: 'bot'; id: string } | { kind: 'group'; id: string } | { kind: 'friend' | 'friend-chat' | 'friend-requests' | 'social-group' | 'new-social-group'; id: string }
@@ -23,6 +24,7 @@ export function ContactList({
   onSelect: (selection: ContactSelection) => void
 }): ReactElement {
   const [query, setQuery] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
   const [builtInOpen, setBuiltInOpen] = useState(true)
   const [groupsOpen, setGroupsOpen] = useState(false)
   const [botsOpen, setBotsOpen] = useState(true)
@@ -102,7 +104,7 @@ export function ContactList({
         </div>
       </div>
 
-      <div className="contact-list">
+      <div className="contact-list" ref={listRef}>
         {hasBuiltIn && <>
           <button className="contact-folder" onClick={() => setBuiltInOpen((open) => !open)} aria-expanded={builtInOpen}>
             <ChevronRight size={15} className={builtInOpen ? 'open' : ''} />
@@ -167,6 +169,7 @@ export function ContactList({
 
         </div>}
       </div>
+      <OverlayScrollbar target={listRef} />
     </aside>
   )
 }

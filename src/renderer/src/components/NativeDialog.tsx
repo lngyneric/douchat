@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactElement } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { reportDiagnostic } from '../diagnostics'
 
@@ -12,7 +12,24 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
 }
 
 /** A native BrowserWindow, with React state/callbacks owned by the opening workspace. */
-export function NativeDialog({ children, onClose, width: _width, height: _height, layoutKey, className = '', ...props }: Props): ReactElement | null {
+export function NativeDialog(props: Props): ReactElement | null {
+  // A browser has no child windows to borrow; the web app shows dialogs in the page.
+  return window.douchat?.platform === 'web' ? <InlineDialog {...props} /> : <WindowDialog {...props} />
+}
+
+function InlineDialog({ children, onClose, width: _width, height: _height, layoutKey: _layoutKey, ...props }: Props): ReactElement {
+  const close = useRef(onClose)
+  close.current = onClose
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); close.current() } }
+    document.addEventListener('keydown', keydown)
+    return () => document.removeEventListener('keydown', keydown)
+  }, [])
+  // Inside the app's root, so the desktop's dialog styles (scoped to .messenger) apply unchanged.
+  return createPortal(<div {...props}>{children}</div>, document.querySelector('.app-shell.messenger') ?? document.body)
+}
+
+function WindowDialog({ children, onClose, width: _width, height: _height, layoutKey, className = '', ...props }: Props): ReactElement | null {
   const width = _width ?? 560
   const height = 400
   const name = useRef(`douchat-dialog-${crypto.randomUUID()}`).current
