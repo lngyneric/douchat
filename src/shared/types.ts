@@ -582,6 +582,8 @@ export type RoutineSchedule =
 export interface Routine {
   /** Account that created and is allowed to execute this local automation. */
   ownerId?: string
+  /** Install that runs this routine; absent means the computer that created it. */
+  deviceId?: string
   id: string
   name: string
   agentId: string
@@ -892,6 +894,9 @@ export interface DouchatApi extends AccountDataApi, DesktopDeviceApi {
   stopConversation: (conversationId: string) => Promise<void>
   clearConversation: (conversationId: string) => Promise<AppSnapshot>
   resetConversationContext: (conversationId: string) => Promise<AppSnapshot>
+  supportShares: (conversationId: string) => Promise<import('./cloudSync').SupportShare[]>
+  createSupportShare: (conversationId: string, hours: number, note: string) => Promise<import('./cloudSync').SupportShare>
+  revokeSupportShare: (shareId: string) => Promise<void>
   setEndpoint: (input: EndpointInput) => Promise<AppSnapshot>
   testEndpoint: (input: EndpointInput) => Promise<EndpointTestResult>
   createRoutine: (input: CreateRoutineInput) => Promise<AppSnapshot>

@@ -11,13 +11,15 @@ import { agentPermissions } from '../shared/agentPermissions'
 import { validateAgentFiles, validateAgentSkills } from '../shared/agentCustomization'
 import { validateAgentStartupArgs } from '../shared/localAgentArguments'
 import { GroupMemoryStore } from './groupMemoryStore'
+import { CloudSyncStore } from './cloudSyncStore'
 import { UserMemoryStore } from './userMemoryStore'
 import { emptyUserMemory } from '../shared/userMemory'
 import { DEFAULT_DECISION_SETTINGS, validateDecisionSettings, type DecisionSettings } from '../shared/groupDecision'
 import type { GameState } from '../shared/groupGame'
 import type { GroupWorkflow } from '../shared/groupWorkflow'
 import type { SocialRoom, SocialMessage } from '../shared/social'
-import { randomUUID } from 'node:crypto'
+import type { RoomReadMark } from '../shared/cloudSync'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { readFile, unlink, writeFile, realpath, lstat } from 'node:fs/promises'
 import { dirname, join, resolve, basename } from 'node:path'
@@ -271,6 +273,7 @@ export class DouchatStore {
 
   readonly userMemories: UserMemoryStore
   readonly groupMemories: GroupMemoryStore
+  readonly cloudSync: CloudSyncStore
   private readonly db: DatabaseSync
   private readonly statements = new Map<string, StatementSync>()
   private readonly attachmentDirectory: string
@@ -306,6 +309,11 @@ export class DouchatStore {
     this.userMemories = new UserMemoryStore(this.db, () => this.currentAccountId, id => this.agent(id)?.ownerId, join(dirname(filePath), 'accounts'), join(dirname(filePath), 'memories'))
     this.profileFiles = new AgentProfileFiles(join(dirname(filePath), 'accounts'))
     for (const agent of this.agents) this.profileFiles.load(agent)
+    this.cloudSync = new CloudSyncStore(this.db, {
+      loadAgent: (agent) => this.profileFiles?.load(agent) ?? agent,
+      saveAgentFiles: (agent, files) => this.profileFiles?.save(agent, files),
+      onRejected: (kind, id, error) => console.warn(`[douchat] Cloud sync skipped ${kind} ${id}: ${error}`)
+    })
     this.migrateAccountSensitiveMeta()
     this.backfillAttachmentOwnership()
     this.backfillMessageSourceContent()
@@ -1409,10 +1417,20 @@ export class DouchatStore {
       }
     }
 
-    const preferredId = definition.id === 'system-admin-fallback'
-      ? `system-admin-${randomUUID()}`
-      : definition.id
-    const id = this.agent(preferredId) ? `system-admin-${randomUUID()}` : preferredId
+    // Derived from the account, so every device creates the same contact and
+    // cloud sync merges them instead of listing two.
+    const accountScopedId = `system-admin-${createHash('sha256').update(normalizedAccountId).digest('hex').slice(0, 32)}`
+    const preferredId = definition.id === 'system-admin-fallback' ? accountScopedId : definition.id
+    const taken = (candidate: string) => this.agent(candidate) && this.agent(candidate)?.ownerId !== normalizedAccountId
+    const id = !taken(preferredId) ? preferredId : !taken(accountScopedId) ? accountScopedId : `system-admin-${randomUUID()}`
+    if (this.agent(id) && this.conversation(`direct-${id}`)) {
+      // Already here, e.g. synced from another device: adopt it rather than reset its topics.
+      const record = { accountId: normalizedAccountId, agentId: id, conversationId: `direct-${id}`, systemKey: definition.systemKey }
+      if (existingIndex >= 0) records[existingIndex] = record
+      else records.push(record)
+      this.setMeta(ACCOUNT_DEFAULT_CONTACTS_META, JSON.stringify(records))
+      return this.ensureDefaultCloudContact(normalizedAccountId, binding)
+    }
     const now = Date.now()
     const model = definition.modelRoute === 'default' ? binding.model : definition.modelRoute
     const agent: AgentConfig = {
@@ -2093,6 +2111,30 @@ export class DouchatStore {
         this.putConversation(conversation)
       }
     })
+  }
+
+  /** How far each shared room has been read here, for other clients to match.
+   * A room with nothing unread counts as read through its latest activity. */
+  roomReadMarks(): RoomReadMark[] {
+    return this.accountConversations.flatMap((conversation) => {
+      if (!conversation.remoteRoomId) return []
+      const caughtUp = !conversation.unread && !conversation.manuallyUnread
+      const readAt = Math.max(conversation.readAt ?? 0, caughtUp ? conversation.updatedAt ?? 0 : 0)
+      return readAt ? [{ roomId: conversation.remoteRoomId, readAt }] : []
+    })
+  }
+
+  /** Another client read a shared room up to `readAt`: drop the unread it covers. */
+  applyRoomRead(mark: RoomReadMark): boolean {
+    const conversation = this.accountConversations.find((item) => item.remoteRoomId === mark.roomId)
+    if (!conversation || mark.readAt <= (conversation.readAt ?? 0)) return false
+    const later = this.all<ChatMessage>('SELECT data FROM messages WHERE conversationId = ?', conversation.id)
+      .filter((message) => message.authorId !== 'user' && message.kind === 'message' && message.createdAt > mark.readAt).length
+    conversation.readAt = mark.readAt
+    conversation.unread = Math.min(conversation.unread, later)
+    if (!later) conversation.manuallyUnread = false
+    this.putConversation(conversation)
+    return true
   }
 
   addUnread(conversationId: string, count: number): void {

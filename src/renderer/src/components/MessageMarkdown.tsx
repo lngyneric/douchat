@@ -1,11 +1,12 @@
 import { ChatErrorBoundary } from './ChatErrorBoundary'
-import { memo, useState, createContext, useContext, type ReactElement, type ReactNode } from 'react'
-import { Streamdown, type Components, type ControlsConfig, type MermaidErrorComponentProps, type PluginConfig } from 'streamdown'
+import { memo, useState, createContext, useContext, isValidElement, cloneElement, type ReactElement, type ReactNode } from 'react'
+import { CodeBlock, Streamdown, type Components, type ControlsConfig, type MermaidErrorComponentProps, type PluginConfig } from 'streamdown'
 import { cjk } from '@streamdown/cjk'
 import { mermaid } from '@streamdown/mermaid'
 import { FileText, LoaderCircle, TriangleAlert } from 'lucide-react'
 import { SvgPreview } from './SvgPreview'
 import { CodeArtifact, codeArtifactLanguages } from './CodeArtifact'
+import { CodeCopyButton } from './CodeCopyButton'
 import { t } from '../preferences'
 
 export const FileConversationContext = createContext<string | undefined>(undefined)
@@ -62,6 +63,17 @@ function LocalFileLink({ href, children }: { href: string; children: ReactNode }
 // Use semantic elements styled by the chat theme, without introducing a
 // global Tailwind reset or Streamdown's document-sized controls into bubbles.
 const components: Components = {
+  pre: ({ children }) => {
+    if (!isValidElement<{ className?: string; children?: ReactNode; 'data-block'?: string }>(children)) return <pre>{children}</pre>
+    const language = /language-([^\s]+)/.exec(children.props.className ?? '')?.[1] ?? ''
+    // Keep specialized diagrams and file artifacts; every other fence still
+    // needs the desktop clipboard instead of the browser-only default button.
+    if (['mermaid', 'svg', 'xml-svg', ...codeArtifactLanguages].includes(language)) {
+      return cloneElement(children, { 'data-block': 'true' })
+    }
+    const code = String(children.props.children ?? '')
+    return <CodeBlock code={code} language={language}><CodeCopyButton code={code} /></CodeBlock>
+  },
   strong: ({ children }) => <strong>{children}</strong>,
   em: ({ children }) => <em>{children}</em>,
   del: ({ children }) => <del>{children}</del>,
@@ -82,7 +94,7 @@ export const messageMarkdownPlugins: PluginConfig = {
   ]
 }
 export const messageMarkdownControls = {
-  code: { copy: true, download: false },
+  code: false,
   table: false,
   image: false,
   mermaid: { copy: false, download: false, fullscreen: true, panZoom: true }

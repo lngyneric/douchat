@@ -82,6 +82,7 @@ import {
 } from '../shared/bot/a2a'
 import { isRetryableRuntimeError, summarizeRuntimeError } from '../shared/bot/errors'
 import { botGreetingPrompt } from '../shared/bot/greeting'
+import { greetingMessageId, systemAdminWelcome } from '../shared/welcome'
 import { supportedInterfaceLanguage, type InterfaceLanguage } from '../shared/language'
 import { CLOUD_MODEL_OPTIONS } from '../shared/models'
 import {
@@ -2960,7 +2961,8 @@ export class DouchatRuntime {
 
   // ───────────────────────────── sending ─────────────────────────────
 
-  async sendMessage(conversationId: string, text: string, inputImages?: MessageImageInput[], files?: MessageFileInput[], mentions?: SelectedMention[]): Promise<void> {
+  /** `messageId` names the user's message, e.g. after the web app's request for it, so every client shows one bubble. */
+  async sendMessage(conversationId: string, text: string, inputImages?: MessageImageInput[], files?: MessageFileInput[], mentions?: SelectedMention[], messageId?: string): Promise<void> {
     this.greetings.get(conversationId)?.abort()
     this.greetings.delete(conversationId)
     const owner = this.store.currentAccountId
@@ -2986,7 +2988,7 @@ export class DouchatRuntime {
       }
       const links: string[] = []
       for (const file of files ?? []) links.push(await this.store.saveIMFile(file, owner))
-      await this.performSendMessage(conversationId, [text, ...links].filter(Boolean).join('\n\n'), images, undefined, undefined, undefined, mentions)
+      await this.performSendMessage(conversationId, [text, ...links].filter(Boolean).join('\n\n'), images, undefined, undefined, undefined, mentions, messageId)
     })
   }
 
@@ -3057,7 +3059,7 @@ export class DouchatRuntime {
     }
   }
 
-  private async performSendMessage(conversationId: string, text: string, inputImages?: MessageImageInput[], signal?: AbortSignal, sourceChannel?: ChatMessage['sourceChannel'], imTurn?: { sessionKey: string; receipt?: ChatMessage; replies: ChatMessage[] }, selections?: SelectedMention[]): Promise<void> {
+  private async performSendMessage(conversationId: string, text: string, inputImages?: MessageImageInput[], signal?: AbortSignal, sourceChannel?: ChatMessage['sourceChannel'], imTurn?: { sessionKey: string; receipt?: ChatMessage; replies: ChatMessage[] }, selections?: SelectedMention[], messageId?: string): Promise<void> {
     const humanConversation = this.store.conversation(conversationId)
     if (humanConversation?.remoteRoomId) {
       if (humanConversation.ownerId !== this.store.currentAccountId || !this.humanSender) throw new Error('Chat not found')
@@ -3098,6 +3100,7 @@ export class DouchatRuntime {
     if (conversation.ownerId !== this.store.currentAccountId) throw new Error('Account changed')
     const prompt = imagePrompt(content, images.length)
     const user = imTurn?.receipt ? this.store.completeIMReceipt(imTurn.receipt.id, content, attachments) : this.store.addMessage({
+      ...(messageId ? { id: messageId } : {}),
       conversationId,
       topicId,
       authorId: 'user',
@@ -4025,24 +4028,8 @@ export class DouchatRuntime {
       // Onboarding is product copy: it must also work before a model connects.
       // Check the whole conversation so opening a new topic does not repeat it.
       if (this.store.messages.some(message => message.conversationId === conversationId)) return
-      const text = this.interfaceLanguage === 'zh-CN'
-        ? `你好，我是${speaker.name}，欢迎来到 Douchat！你可以直接通过聊天，让我帮你：
-
-- **创建联系人**：试着说“帮我创建一个英语老师”，告诉我你需要怎样的智能体。
-- **拉群协作**：有了联系人后，说“把英语老师和你拉进一个学习群”。在群里也可以用 @ 指定谁来回答。
-- **解决日常问题**：写邮件、翻译、解释代码、制定学习计划，或者一起梳理一个想法。
-- **设置提醒**：比如“10 分钟后提醒我喝水”（Douchat 需要保持运行）。
-
-不知道从哪里开始？告诉我你想完成什么，我们一起试试。`
-        : `Hi, I'm ${speaker.name}. Welcome to Douchat! Just tell me what you need:
-
-- **Create a contact**: Try “Create an English tutor for me” and describe the agent you want.
-- **Start a group**: Once you have a contact, say “Put you and my English tutor in a study group.” Use @ in the group to choose who answers.
-- **Get everyday help**: Draft emails, translate text, explain code, make a study plan, or think through an idea.
-- **Set a reminder**: Try “Remind me to drink water in 10 minutes” (keep Douchat running).
-
-Not sure where to start? Tell me what you'd like to accomplish, and we'll try it together.`
-      this.store.addMessage({ conversationId, topicId, authorId: speaker.id, authorName: speaker.name, text, kind: 'message' })
+      const text = systemAdminWelcome(speaker.name, this.interfaceLanguage)
+      this.store.addMessage({ id: greetingMessageId(conversationId, topicId), conversationId, topicId, authorId: speaker.id, authorName: speaker.name, text, kind: 'message' })
       this.emit()
       return
     }
@@ -4083,7 +4070,7 @@ Not sure where to start? Tell me what you'd like to accomplish, and we'll try it
       ])
       if ((!abort.signal.aborted || timedOut) && stillEmpty()) {
         const fallback = this.interfaceLanguage === 'zh-CN' ? `你好，我是${speaker.name}。` : `Hi, I'm ${speaker.name}.`
-        this.store.addMessage({ conversationId, topicId, authorId: speaker.id, authorName: speaker.name,
+        this.store.addMessage({ id: greetingMessageId(conversationId, topicId), conversationId, topicId, authorId: speaker.id, authorName: speaker.name,
           text: text.split('\n').find(line => line.trim()) || fallback, kind: 'message' })
         this.emit()
       }

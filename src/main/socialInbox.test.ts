@@ -694,3 +694,25 @@ it('carries the selected member ID through runtime, remote send and a lost-recei
   expect(sends[0].content).toBe('@Dr. Dou help')
   alice.store.close()
 })
+
+it('shares how far a friend chat was read and applies a later mark from another client', () => {
+  const alice = account('alice')
+  const at = (minute: number) => `2026-09-21T00:0${minute}:00Z`
+  const message = (id: string, minute: number): SocialMessage => ({ id, roomId: 'dm', authorId: 'bob', authorName: 'Bob', content: id, status: 'sent', createdAt: at(minute) } as SocialMessage)
+  const chat = alice.store.syncFriendConversation('alice', room, [message('one', 1), message('two', 2), message('three', 3)])
+  expect(alice.store.conversation(chat.id)?.unread).toBe(3)
+  // Nothing read here yet, so there is no mark to share.
+  expect(alice.store.roomReadMarks()).toEqual([])
+
+  // The web app read through the second message: only the third stays unread.
+  expect(alice.store.applyRoomRead({ roomId: 'dm', readAt: Date.parse(at(2)) })).toBe(true)
+  expect(alice.store.conversation(chat.id)).toMatchObject({ unread: 1, readAt: Date.parse(at(2)) })
+  // An older mark changes nothing.
+  expect(alice.store.applyRoomRead({ roomId: 'dm', readAt: Date.parse(at(1)) })).toBe(false)
+
+  // Read here: the room counts as read through its latest activity.
+  alice.store.markConversationRead(chat.id)
+  const [mark] = alice.store.roomReadMarks()
+  expect(mark.roomId).toBe('dm')
+  expect(mark.readAt).toBeGreaterThanOrEqual(Date.parse(at(3)))
+})
